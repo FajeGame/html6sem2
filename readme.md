@@ -238,6 +238,12 @@ docker compose exec redis redis-cli TTL "restaurants::SimpleKey []"
 ---
 
 ## Скриншоты
+<img width="351" height="40" alt="image" src="https://github.com/user-attachments/assets/a0a76546-53ce-4c63-a951-58b8a629be0d" />
+<img width="1007" height="627" alt="image" src="https://github.com/user-attachments/assets/3c61cd75-1200-41ca-bbae-9bfd2cb072a0" />
+<img width="319" height="59" alt="image" src="https://github.com/user-attachments/assets/636456df-1b2a-4a3b-9d8d-f57f07a77bdf" />
+<img width="507" height="224" alt="image" src="https://github.com/user-attachments/assets/dd27edb1-3d02-42d0-aa7c-518dfa2b15f9" />
+<img width="697" height="34" alt="image" src="https://github.com/user-attachments/assets/feb94c28-753f-4130-8b33-85a0345a027e" />
+
 
 
 ---
