@@ -9,6 +9,8 @@ import com.example.lab3.domain.OrderRepositoryPort
 import com.example.lab3.domain.OrderStatus
 import com.example.lab3.domain.User
 import com.example.lab3.domain.UserRepositoryPort
+import com.example.lab3.domain.event.OrderCreatedEvent
+import com.example.lab3.domain.event.OrderStatusChangedEvent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -35,7 +37,7 @@ class OrderServiceTest {
     lateinit var dishService: DishService
 
     @Mock
-    lateinit var notificationService: NotificationService
+    lateinit var orderEventPublisher: OrderEventPublisher
 
     @InjectMocks
     lateinit var orderService: OrderService
@@ -52,7 +54,7 @@ class OrderServiceTest {
     )
 
     @Test
-    fun `create создаёт заказ при валидных данных`() {
+    fun `create создаёт заказ и публикует событие`() {
         val dishIds = listOf(10L)
         val savedOrder = Order(id = 1, userId = 1, status = OrderStatus.PENDING, createdAt = LocalDateTime.now(), dishIds = dishIds)
         whenever(userRepositoryPort.findById(1)).thenReturn(user)
@@ -62,6 +64,7 @@ class OrderServiceTest {
         val result = orderService.create(1, dishIds)
 
         assertEquals(savedOrder, result)
+        verify(orderEventPublisher).publishOrderCreated(any())
     }
 
     @Test
@@ -91,7 +94,7 @@ class OrderServiceTest {
     }
 
     @Test
-    fun `updateStatus переводит заказ из PENDING в CONFIRMED`() {
+    fun `updateStatus переводит заказ и публикует событие`() {
         val existing = Order(id = 1, userId = 1, status = OrderStatus.PENDING, createdAt = LocalDateTime.now(), dishIds = listOf(10L))
         val updated = existing.copy(status = OrderStatus.CONFIRMED)
         whenever(orderRepositoryPort.findById(1)).thenReturn(existing)
@@ -101,7 +104,7 @@ class OrderServiceTest {
         val result = orderService.updateStatus(1, OrderStatus.CONFIRMED)
 
         assertEquals(OrderStatus.CONFIRMED, result.status)
-        verify(notificationService).sendOrderStatusUpdate(user.email, 1, OrderStatus.CONFIRMED.name)
+        verify(orderEventPublisher).publishOrderStatusChanged(any())
     }
 
     @Test

@@ -1,168 +1,162 @@
-# Лабораторная работа №10
+# Лабораторная работа №11
 
-**Тема:** асинхронность и планировщик (корутины, @Scheduled, Spring Mail)
+**Тема:** брокер сообщений RabbitMQ, событийная архитектура
 
 ---
 
 ## Описание проекта
 
-REST API сервиса доставки еды — продолжение ЛР-4–9: JWT, Redis-кэш, Docker, CI/CD. В текущей работе добавлены асинхронные email-уведомления при смене статуса заказа (Kotlin coroutines) и планировщик для автоматической отмены «зависших» заказов в статусе `PREPARING`.
+REST API сервиса доставки еды — продолжение ЛР-4–10. В текущей работе прямой вызов `NotificationService` из `OrderService` заменён на публикацию доменных событий в RabbitMQ. Email-уведомления обрабатываются асинхронно через `@RabbitListener`.
 
-Для локальной разработки используется **MailHog** — письма не уходят в интернет, а отображаются в веб-UI.
+```
+OrderService → RabbitMQ (order.exchange) → NotificationConsumer → NotificationService → MailHog
+```
+
+Management UI: http://localhost:15672 (guest / guest)
 
 ---
 
 ## Структура проекта
 
 ```
-lab10/
+lab11/
 ├── src/main/kotlin/com/example/lab3/
-│   ├── config/CoroutineConfig.kt       # applicationScope (SupervisorJob + IO)
+│   ├── config/RabbitConfig.kt           # exchange, queues, bindings, DLQ, JSON
+│   ├── domain/event/                    # OrderCreatedEvent, OrderStatusChangedEvent
 │   ├── application/
-│   │   ├── NotificationService.kt      # scope.launch + withContext(IO)
-│   │   ├── OrderScheduler.kt           # @Scheduled отмена зависших заказов
-│   │   └── OrderService.kt             # вызов NotificationService
-│   └── ...
-├── docker-compose.yaml                 # + mailhog (1025 SMTP, 8025 UI)
-└── .env.example                        # MAIL_HOST, STUCK_ORDER_*
+│   │   ├── OrderEventPublisher.kt       # RabbitTemplate
+│   │   ├── NotificationConsumer.kt      # @RabbitListener
+│   │   └── OrderService.kt              # без зависимости на NotificationService
+│   └── infrastructure/jpa/
+│       └── ProcessedEventEntity.kt      # идемпотентность
+├── docker-compose.yaml                  # + rabbitmq:3-management
+└── db/migration/V7__create_processed_events.sql
 ```
 
 ---
 
-## Реализованное в ЛР-10
+## Реализованное в ЛР-11
 
-### 1. CoroutineConfig
-
-**Файл:** `src/main/kotlin/com/example/lab3/config/CoroutineConfig.kt`
-
-```kotlin
-@Bean
-fun applicationScope(): CoroutineScope {
-    val handler = CoroutineExceptionHandler { _, ex ->
-        LoggerFactory.getLogger("CoroutineScope").error("Unhandled coroutine exception", ex)
-    }
-    return CoroutineScope(SupervisorJob() + Dispatchers.IO + handler)
-}
-```
-
----
-
-### 2. NotificationService
-
-**Файл:** `src/main/kotlin/com/example/lab3/application/NotificationService.kt`
-
-```kotlin
-fun sendOrderStatusUpdate(to: String, orderId: Long, status: String) {
-    scope.launch {
-        runCatching {
-            withContext(Dispatchers.IO) {
-                mailSender.send(SimpleMailMessage().apply {
-                    setTo(to)
-                    subject = "Заказ #$orderId: статус изменён"
-                    text = "Новый статус заказа #$orderId: $status"
-                })
-            }
-        }.onFailure { ex ->
-            logger.error(ex) { "Failed to send notification..." }
-        }
-    }
-}
-```
-
-Вызывается из `OrderService.updateStatus` после успешного обновления.
-
----
-
-### 3. Spring Mail + MailHog
+### 1. RabbitMQ в docker-compose
 
 **Файл:** `docker-compose.yaml`
 
 ```yaml
-mailhog:
-  image: mailhog/mailhog
+rabbitmq:
+  image: rabbitmq:3-management
   ports:
-    - "1025:1025"   # SMTP
-    - "8025:8025"   # Web UI
-```
-
-**Файл:** `application.yml`
-
-```yaml
-spring:
-  mail:
-    host: ${MAIL_HOST:localhost}
-    port: ${MAIL_PORT:1025}
-
-app:
-  scheduler:
-    stuck-order-interval-ms: ${STUCK_ORDER_INTERVAL_MS:900000}
-    stuck-order-threshold-hours: ${STUCK_ORDER_THRESHOLD_HOURS:1}
+    - "5672:5672"
+    - "15672:15672"
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "ping"]
 ```
 
 ---
 
-### 4. OrderScheduler
+### 2. RabbitConfig
 
-**Файл:** `src/main/kotlin/com/example/lab3/application/OrderScheduler.kt`
+**Файл:** `src/main/kotlin/com/example/lab3/config/RabbitConfig.kt`
+
+- Topic exchange `order.exchange`
+- Очереди: `order.status.changed.queue`, `order.created.queue`
+- DLQ: `order.status.changed.dlq` (через `x-dead-letter-*`)
+- `Jackson2JsonMessageConverter`, durable-очереди
+
+---
+
+### 3. Доменные события
+
+**Файл:** `domain/event/OrderStatusChangedEvent.kt`
 
 ```kotlin
-@Scheduled(fixedDelayString = "\${app.scheduler.stuck-order-interval-ms}")
-fun cancelStuckOrders() {
-    val threshold = LocalDateTime.now().minusHours(thresholdHours)
-    val stuck = orderService.findStuckPreparingOrders(threshold)
-    logger.info { "Found ${stuck.size} stuck orders in PREPARING status" }
-    stuck.forEach { order ->
-        orderService.updateStatus(order.id, OrderStatus.CANCELLED)
-        logger.info { "Cancelled stuck order id=${order.id}" }
-    }
-}
+data class OrderStatusChangedEvent(
+    val orderId: Long,
+    val userId: Long,
+    val userEmail: String,
+    val oldStatus: OrderStatus,
+    val newStatus: OrderStatus,
+    val changedAt: LocalDateTime = LocalDateTime.now()
+)
 ```
-
-Добавлен статус `PREPARING` в `OrderStatus`. Цепочка: `PENDING → CONFIRMED → PREPARING → DELIVERED`.
 
 ---
 
-### 5. Тесты
+### 4. OrderService — публикация вместо прямого вызова
 
-- `OrderServiceTest` — проверка вызова `NotificationService` при смене статуса
-- `OrderSchedulerTest` — отмена зависших заказов
-- Планировщик отключён в тестах: `@Profile("!test")` на `OrderScheduler`
+**Файл:** `OrderService.kt` — зависит от `OrderEventPublisher`, **не** от `NotificationService`:
+
+```kotlin
+orderEventPublisher.publishOrderStatusChanged(
+    OrderStatusChangedEvent(
+        orderId = updated.id,
+        userId = updated.userId,
+        userEmail = user.email,
+        oldStatus = existing.status,
+        newStatus = newStatus
+    )
+)
+```
+
+---
+
+### 5. NotificationConsumer
+
+**Файл:** `NotificationConsumer.kt`
+
+```kotlin
+@RabbitListener(queues = [RabbitConfig.ORDER_STATUS_QUEUE])
+fun handleOrderStatusChanged(event: OrderStatusChangedEvent) {
+    if (processedEventRepository.existsByOrderIdAndNewStatus(...)) return
+    notificationService.sendStatusChangedEmail(event)
+    processedEventRepository.save(...)
+}
+
+@RabbitListener(queues = [RabbitConfig.ORDER_CREATED_QUEUE])
+fun handleOrderCreated(event: OrderCreatedEvent) { ... }
+```
+
+---
+
+### 6. Идемпотентность
+
+**Файл:** `V7__create_processed_events.sql` — уникальный индекс `(order_id, new_status)`.
 
 ---
 
 ## Запуск
 
 ```bash
-cp .env.example .env   # заполнить значения
+cp .env.example .env
 docker compose up --build
 ```
 
-| Сервис   | URL |
-|:---------|:----|
-| API      | http://localhost:8080 |
-| Swagger  | http://localhost:8080/swagger-ui.html |
-| MailHog  | http://localhost:8025 |
-| pgAdmin  | http://localhost:5050 |
+| Сервис | URL |
+|:-------|:----|
+| API | http://localhost:8080 |
+| Swagger | http://localhost:8080/swagger-ui.html |
+| RabbitMQ UI | http://localhost:15672 (guest/guest) |
+| MailHog | http://localhost:8025 |
 
 ### Автотесты
 
 ```bash
 ./mvnw test
 ```
+---
+## Скриншоты
+
 
 ---
 
 ## CI / CD
 
-Без изменений относительно ЛР-8–9.
+Без изменений относительно ЛР-8–10.
 
 ---
 
-## Эндпоинты (кратко)
+## Эндпoинты (кратко)
 
-| Метод  | Путь                         | Действие                          |
-|:-------|:-----------------------------|:----------------------------------|
-| PATCH  | `/api/v1/orders/{id}/status` | Смена статуса + email пользователю |
-| POST   | `/api/v1/orders`             | Создание заказа                   |
-
-Статусы заказа: `PENDING`, `CONFIRMED`, `PREPARING`, `DELIVERED`, `CANCELLED`.
+| Метод | Путь | Событие в RabbitMQ |
+|:------|:-----|:-------------------|
+| POST | `/api/v1/orders` | `order.created` |
+| PATCH | `/api/v1/orders/{id}/status` | `order.status.changed` |

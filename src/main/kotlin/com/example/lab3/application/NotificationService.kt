@@ -1,5 +1,6 @@
 package com.example.lab3.application
 
+import com.example.lab3.domain.event.OrderStatusChangedEvent
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,10 @@ class NotificationService(
     private val scope: CoroutineScope
 ) {
     private val logger = KotlinLogging.logger {}
+
+    fun sendStatusChangedEmail(event: OrderStatusChangedEvent) {
+        sendOrderStatusUpdate(event.userEmail, event.orderId, event.newStatus.name)
+    }
 
     fun sendOrderStatusUpdate(to: String, orderId: Long, status: String) {
         scope.launch {

@@ -8,6 +8,8 @@ import com.example.lab3.domain.OrderRepositoryPort
 import com.example.lab3.domain.OrderStatus
 import com.example.lab3.domain.Dish
 import com.example.lab3.domain.UserRepositoryPort
+import com.example.lab3.domain.event.OrderCreatedEvent
+import com.example.lab3.domain.event.OrderStatusChangedEvent
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.security.access.AccessDeniedException
 import org.springframework.stereotype.Service
@@ -18,17 +20,18 @@ class OrderService(
     private val orderRepositoryPort: OrderRepositoryPort,
     private val userRepositoryPort: UserRepositoryPort,
     private val dishService: DishService,
-    private val notificationService: NotificationService
+    private val orderEventPublisher: OrderEventPublisher
 ) {
     private val logger = KotlinLogging.logger {}
 
     fun create(userId: Long, dishIds: List<Long>): Order {
         if (dishIds.isEmpty()) throw BadRequestException("dishIds must not be empty")
-        if (userRepositoryPort.findById(userId) == null) throw BadRequestException("User with id=$userId not found")
+        val user = userRepositoryPort.findById(userId)
+            ?: throw BadRequestException("User with id=$userId not found")
         val dishes = dishService.findByIds(dishIds)
         if (dishes.size != dishIds.distinct().size) throw BadRequestException("Some dishes not found")
         logger.info { "Creating order for userId=$userId" }
-        return orderRepositoryPort.create(
+        val saved = orderRepositoryPort.create(
             Order(
                 id = 0,
                 userId = userId,
@@ -37,6 +40,14 @@ class OrderService(
                 dishIds = dishIds.distinct()
             )
         )
+        orderEventPublisher.publishOrderCreated(
+            OrderCreatedEvent(
+                orderId = saved.id,
+                userId = saved.userId,
+                dishIds = saved.dishIds
+            )
+        )
+        return saved
     }
 
     fun findById(id: Long): Order? = orderRepositoryPort.findById(id)
@@ -56,7 +67,17 @@ class OrderService(
         if (existing.status == newStatus) return existing
         logger.info { "Updating order id=$id status=${existing.status}->$newStatus" }
         val updated = orderRepositoryPort.update(existing.copy(status = newStatus)) ?: existing
-        notifyStatusChange(updated, newStatus)
+        val user = userRepositoryPort.findById(updated.userId)
+            ?: throw NotFoundException("User with id=${updated.userId} not found")
+        orderEventPublisher.publishOrderStatusChanged(
+            OrderStatusChangedEvent(
+                orderId = updated.id,
+                userId = updated.userId,
+                userEmail = user.email,
+                oldStatus = existing.status,
+                newStatus = newStatus
+            )
+        )
         return updated
     }
 
@@ -78,11 +99,6 @@ class OrderService(
         if (isAdmin) return findAll(null, status)
         val user = userRepositoryPort.findByEmail(userEmail) ?: return emptyList()
         return findAll(user.id, status)
-    }
-
-    private fun notifyStatusChange(order: Order, newStatus: OrderStatus) {
-        val user = userRepositoryPort.findById(order.userId) ?: return
-        notificationService.sendOrderStatusUpdate(user.email, order.id, newStatus.name)
     }
 
     private fun isTransitionAllowed(from: OrderStatus, to: OrderStatus): Boolean {
