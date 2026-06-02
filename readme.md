@@ -1,4 +1,4 @@
-<img width="1074" height="262" alt="image" src="https://github.com/user-attachments/assets/899f03ed-7326-4231-8776-09a5268faa24" /># Лабораторная работа №12
+# Лабораторная работа №12
 
 **Тема:** мониторинг — Actuator, Prometheus, Grafana, Loki, Grafana Alloy
 
@@ -159,6 +159,7 @@ mvn test
 <img width="1268" height="489" alt="image" src="https://github.com/user-attachments/assets/8acc114d-30fb-48a2-b00d-39eaeb7d9b7b" />
 <img width="1275" height="486" alt="image" src="https://github.com/user-attachments/assets/c551c0d2-aaba-407d-8af7-929538b8cef3" />
 <img width="1074" height="262" alt="image" src="https://github.com/user-attachments/assets/76158ef8-377e-4eb5-a3b8-4d70d7fd2e07" />
+<img width="1074" height="262" alt="image" src="https://github.com/user-attachments/assets/899f03ed-7326-4231-8776-09a5268faa24" />
 <img width="1091" height="476" alt="image" src="https://github.com/user-attachments/assets/dc2e7176-b266-4ee1-96cd-56c5efa43b4e" />
 ![Uploading image.png…]()
 
