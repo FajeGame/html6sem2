@@ -1,0 +1,26 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+  cache:
+    type: redis
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  mail:
+    host: localhost
+    port: 1025
+
+logging:
+  level:
+    root: WARN
+    com.example.lab3: DEBUG
+
+jwt:
+  secret: test-jwt-secret-key-for-integration-tests-32b
+  expiration-ms: 86400000

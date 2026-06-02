@@ -1,0 +1,11 @@
+target/
+.git/
+.github/
+.idea/
+*.md
+.env
+logs/
+data/
+node_modules/
+*.out
+*.err
