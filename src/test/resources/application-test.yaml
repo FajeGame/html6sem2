@@ -5,6 +5,8 @@ spring:
     show-sql: false
   flyway:
     enabled: true
+  cache:
+    type: redis
 
 logging:
   level:

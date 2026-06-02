@@ -3,12 +3,14 @@ package com.example.lab3.application
 import com.example.lab3.domain.Dish
 import com.example.lab3.domain.DishRepositoryPort
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.InjectMocks
 import org.mockito.Mock
 import org.mockito.Mockito.`when`
 import org.mockito.junit.jupiter.MockitoExtension
+import org.springframework.test.util.ReflectionTestUtils
 import java.math.BigDecimal
 
 @ExtendWith(MockitoExtension::class)
@@ -28,6 +30,11 @@ class DishServiceTest {
         isAvailable = true,
         restaurantId = 1
     )
+
+    @BeforeEach
+    fun setUp() {
+        ReflectionTestUtils.setField(dishService, "self", dishService)
+    }
 
     @Test
     fun `create сохраняет блюдо через репозиторий`() {
@@ -55,8 +62,16 @@ class DishServiceTest {
 
     @Test
     fun `deleteById делегирует удаление в репозиторий`() {
+        `when`(dishRepositoryPort.findById(1)).thenReturn(dish.copy(id = 1))
         `when`(dishRepositoryPort.deleteById(1)).thenReturn(true)
 
         assertEquals(true, dishService.deleteById(1))
+    }
+
+    @Test
+    fun `deleteById возвращает false если блюдо не найдено`() {
+        `when`(dishRepositoryPort.findById(999)).thenReturn(null)
+
+        assertEquals(false, dishService.deleteById(999))
     }
 }

@@ -1,12 +1,12 @@
-# Лабораторная работа №8
+# Лабораторная работа №9
 
-**Тема:** документация API (SpringDoc), контейнеризация (Docker) и CI/CD
+**Тема:** кэширование (Redis, Spring Cache)
 
 ---
 
 ## Описание проекта
 
-REST API сервиса доставки еды — продолжение ЛР-4–7: CRUD-сущности, JWT-аутентификация, автотесты. В текущей работе добавлены интерактивная документация Swagger UI, Docker-образ приложения, полный стек через docker-compose (postgres + app + pgAdmin) и автоматическая публикация образа в GHCR при push в main.
+REST API сервиса доставки еды — продолжение ЛР-4–8: JWT, Swagger, Docker, CI/CD. В текущей работе добавлен слой кэширования на Redis: горячие read-запросы (список ресторанов, ресторан по id, меню) отдаются из кэша, при изменении данных кэш инвалидируется.
 
 Основные сущности:
 
@@ -17,249 +17,216 @@ REST API сервиса доставки еды — продолжение ЛР-
 | Dish        | Блюдо, привязанное к ресторану                  |
 | Order       | Заказ пользователя, содержащий список блюд      |
 
-Документация API: `http://localhost:8080/swagger-ui.html`  
-OpenAPI JSON: `http://localhost:8080/v3/api-docs`
+Кэши: `restaurants` (TTL 1 ч), `dishes` (TTL 1 ч).
 
 ---
 
 ## Структура проекта
 
 ```
-lab8/
+lab9/
 ├── src/main/kotlin/com/example/lab3/
-│   ├── api/                    # REST-контроллеры с @Operation, @Tag
-│   ├── config/                 # OpenApiConfig
-│   ├── security/               # SecurityConfig (+ пути Swagger)
+│   ├── config/                 # CacheConfig, OpenApiConfig
+│   ├── application/            # RestaurantService, DishService (+ @Cacheable)
 │   └── ...
-├── src/main/resources/
-│   ├── application.yml
-│   └── db/migration/
-├── Dockerfile                  # multi-stage: builder + JRE runtime
-├── .dockerignore
-├── docker-compose.yaml         # postgres + app + pgadmin
-├── .env.example                # шаблон переменных окружения
-├── .github/workflows/
-│   ├── ci.yaml                 # тесты на pull_request
-│   └── cd.yaml                 # сборка и push образа в GHCR
-└── pom.xml                     # springdoc-openapi-starter-webmvc-ui
+├── docker-compose.yaml         # postgres + redis + app + pgadmin
+├── .env.example                # REDIS_HOST, REDIS_PORT
+└── src/test/kotlin/.../
+    ├── support/AbstractIntegrationTest.kt
+    └── api/RestaurantCacheTest.kt
 ```
 
 ### Стек в docker-compose
 
 ```
-postgres (healthcheck)
-    ↓ service_healthy
-app (Spring Boot)  ←→  pgadmin (веб-UI для БД)
+postgres (healthcheck) ──┐
+redis (healthcheck) ─────┼──→ app (Spring Boot + Redis Cache)
+                         └──→ pgadmin
 ```
 
 ---
 
-## Реализованное в ЛР-8
+## Реализованное в ЛР-9
 
-### 1. SpringDoc OpenAPI
+### 1. Redis в docker-compose
+
+**Файл:** `docker-compose.yaml`
+
+```yaml
+redis:
+  image: redis:7-alpine
+  ports:
+    - "6379:6379"
+  volumes:
+    - redis_data:/data
+  command: redis-server --appendonly yes
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+
+app:
+  environment:
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+  depends_on:
+    redis:
+      condition: service_healthy
+```
+
+**Файл:** `.env.example`
+
+```
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+---
+
+### 2. Зависимости и конфигурация
 
 **Файл:** `pom.xml`
 
 ```xml
 <dependency>
-    <groupId>org.springdoc</groupId>
-    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-    <version>2.8.9</version>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-cache</artifactId>
 </dependency>
 ```
 
-**Файл:** `src/main/kotlin/com/example/lab3/config/OpenApiConfig.kt`
+**Файл:** `Lab3Application.kt`
+
+```kotlin
+@SpringBootApplication
+@EnableCaching
+class Lab3Application
+```
+
+**Файл:** `application.yml`
+
+```yaml
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cache:
+    type: redis
+```
+
+---
+
+### 3. CacheConfig (JSON-сериализация, TTL)
+
+**Файл:** `src/main/kotlin/com/example/lab3/config/CacheConfig.kt`
 
 ```kotlin
 @Configuration
-class OpenApiConfig {
+class CacheConfig {
     @Bean
-    fun openApi(): OpenAPI = OpenAPI()
-        .info(
-            Info()
-                .title("Food Delivery API")
-                .version("1.0.0")
-                .description("REST API сервиса доставки еды")
-        )
+    fun redisCacheManagerBuilderCustomizer(objectMapper: ObjectMapper): RedisCacheManagerBuilderCustomizer {
+        val serializer = GenericJackson2JsonRedisSerializer(objectMapper)
+        val pair = RedisSerializationContext.SerializationPair.fromSerializer(serializer)
+
+        fun config(ttl: Duration) = RedisCacheConfiguration.defaultCacheConfig()
+            .entryTtl(ttl)
+            .serializeValuesWith(pair)
+            .disableCachingNullValues()
+
+        return RedisCacheManagerBuilderCustomizer { builder ->
+            builder
+                .withCacheConfiguration("restaurants", config(Duration.ofHours(1)))
+                .withCacheConfiguration("dishes", config(Duration.ofHours(1)))
+                .cacheDefaults(config(Duration.ofMinutes(5)))
+        }
+    }
 }
 ```
 
-**Файл:** `src/main/kotlin/com/example/lab3/security/SecurityConfig.kt` — пути Swagger открыты без JWT:
+---
+
+### 4. @Cacheable на read-методах
+
+**Файл:** `RestaurantService.kt`
 
 ```kotlin
-it.requestMatchers(
-    "/swagger-ui/**",
-    "/swagger-ui.html",
-    "/v3/api-docs/**"
-).permitAll()
+@Cacheable(cacheNames = ["restaurants"])
+fun findAll(): List<Restaurant> {
+    logger.info { "Loading all restaurants from DB" }
+    return restaurantRepositoryPort.findAll()
+}
+
+@Cacheable(cacheNames = ["restaurants"], key = "#id")
+fun findById(id: Long): Restaurant? {
+    logger.info { "Loading restaurant id=$id from DB" }
+    return restaurantRepositoryPort.findById(id)
+}
 ```
 
-**Аннотированные эндпoинты** (Auth, Restaurants, Orders):
+**Файл:** `DishService.kt`
 
 ```kotlin
-@Tag(name = "Auth", description = "Регистрация и аутентификация")
-@Operation(summary = "Регистрация нового пользователя")
-@ApiResponses(
-    value = [
-        ApiResponse(responseCode = "201", description = "Пользователь создан, возвращён JWT"),
-        ApiResponse(responseCode = "409", description = "Email уже занят")
-    ]
-)
+@Cacheable(cacheNames = ["dishes"], key = "#restaurantId")
+fun findByRestaurantId(restaurantId: Long): List<Dish> {
+    logger.info { "Loading dishes for restaurantId=$restaurantId from DB" }
+    return dishRepositoryPort.findByRestaurantId(restaurantId)
+}
 ```
-
-Аналогичные аннотации — в `RestaurantController` (`GET /`, `GET /{id}`, `POST /`) и `OrderController` (`POST /`).
 
 ---
 
-### 2. Dockerfile (multi-stage)
+### 5. Инвалидация кэша
 
-**Файл:** `Dockerfile`
-
-```dockerfile
-FROM eclipse-temurin:21-jdk AS builder
-WORKDIR /app
-COPY . .
-RUN chmod +x mvnw && ./mvnw package -DskipTests
-
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
-```
-
-**Файл:** `.dockerignore` — исключает `target/`, `.git/`, `.env`, `*.md` и др.
+| Операция              | Аннотация |
+|:----------------------|:----------|
+| create restaurant     | `@CacheEvict(restaurants, allEntries=true)` |
+| update restaurant     | `@CachePut(restaurants, key="#id")` |
+| delete restaurant     | `@CacheEvict` restaurants + dishes (allEntries) |
+| create/update dish    | `@CacheEvict(dishes, key=restaurantId)` |
+| delete dish           | `@CacheEvict` dishes + restaurants |
 
 ---
 
-### 3. docker-compose и переменные окружения
+### 6. Тесты кэширования
 
-**Файл:** `docker-compose.yaml`
+**Файл:** `src/test/kotlin/com/example/lab3/api/RestaurantCacheTest.kt`
 
-```yaml
-postgres:
-  healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-    interval: 5s
-    timeout: 5s
-    retries: 5
+- Повторный `GET /api/v1/restaurants` — запись в `cacheManager` сохраняется
+- После `POST /api/v1/restaurants` — кэш `restaurants` пуст
+- После `PUT` — кэш содержит обновлённые данные (`@CachePut`)
+- После `DELETE` блюда — сброшены кэши `dishes` и `restaurants`
 
-app:
-  build: .
-  environment:
-    SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-    SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
-    SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-    JWT_SECRET: ${JWT_SECRET}
-  depends_on:
-    postgres:
-      condition: service_healthy
-
-pgadmin:
-  image: dpage/pgadmin4
-  ports:
-    - "5050:80"
-```
-
-**Файл:** `.env.example` — ключи без значений (для документации).  
-**Файл:** `.env` — реальные значения, добавлен в `.gitignore`.
-
-| Переменная         | Назначение                          |
-|:-------------------|:------------------------------------|
-| POSTGRES_DB        | имя базы данных                     |
-| POSTGRES_USER      | пользователь PostgreSQL             |
-| POSTGRES_PASSWORD  | пароль PostgreSQL                   |
-| PGADMIN_EMAIL      | логин pgAdmin                       |
-| PGADMIN_PASSWORD   | пароль pgAdmin                      |
-| JWT_SECRET         | секрет для подписи JWT (≥ 32 симв.) |
-| SERVER_PORT        | порт приложения на хосте            |
-
----
-
-### 4. CD: публикация образа в GHCR
-
-**Файл:** `.github/workflows/cd.yaml`
-
-```yaml
-on:
-  push:
-    branches: [main, master]
-
-permissions:
-  contents: read
-  packages: write
-
-jobs:
-  build-and-push:
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/food-delivery:latest
-```
-
-Образ появляется в разделе **Packages** GitHub-профиля после push в main.
-
----
-
-### 5. CI: триггер на pull_request
-
-**Файл:** `.github/workflows/ci.yaml`
-
-```yaml
-on:
-  pull_request:
-    branches: [main, master]
-```
-
-Тесты запускаются только на PR (без `push` / `workflow_dispatch`).
+Redis в тестах поднимается через Testcontainers (singleton в `AbstractIntegrationTest`).
 
 ---
 
 ## Запуск
 
-### Весь стек через Docker Compose
+### Весь стек
 
 ```bash
-# Скопировать шаблон и заполнить значения
-cp .env.example .env
-
-# Собрать образ и поднять postgres + app + pgadmin
+cp .env.example .env   # заполнить значения
 docker compose up --build
 ```
 
-После старта:
-
-| Сервис      | URL                              |
-|:------------|:---------------------------------|
-| REST API    | http://localhost:8080            |
-| Swagger UI  | http://localhost:8080/swagger-ui.html |
-| pgAdmin     | http://localhost:5050            |
-
-В pgAdmin для подключения к БД укажите хост `postgres` (имя сервиса в compose).
-
-### Только образ приложения
+### Локально (БД + Redis в Docker, app через Maven)
 
 ```bash
-docker build -t food-delivery:latest .
-docker run -p 8080:8080 \
-  -e SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/delivery \
-  -e JWT_SECRET=local-dev-jwt-secret-key-min-32-chars!! \
-  food-delivery:latest
+docker compose up -d postgres redis
+./mvnw spring-boot:run
 ```
 
-### Локальная разработка (без Docker для app)
+### Проверка кэша в redis-cli
 
 ```bash
-docker compose up -d postgres
-./mvnw spring-boot:run
+docker compose exec redis redis-cli KEYS *
+docker compose exec redis redis-cli GET "restaurants::SimpleKey []"
+docker compose exec redis redis-cli TTL "restaurants::SimpleKey []"
 ```
 
 ### Автотесты
@@ -270,30 +237,25 @@ docker compose up -d postgres
 
 ---
 
-## CI / CD
-
-| Workflow   | Триггер              | Действие                          |
-|:-----------|:---------------------|:----------------------------------|
-| `ci.yaml`  | pull_request → main  | `./mvnw test`                     |
-| `cd.yaml`  | push → main          | `docker build` + push в GHCR      |
-
----
-
 ## Скриншоты
 
 
+---
+
+## CI / CD
+
+Без изменений относительно ЛР-8: `ci.yaml` (PR → тесты), `cd.yaml` (push → Docker-образ в GHCR).
 
 ---
+
 ## Эндпоинты (кратко)
 
-| Метод  | Путь                    | Доступ              |
-|:-------|:------------------------|:--------------------|
-| POST   | `/auth/register`        | публичный           |
-| POST   | `/auth/login`           | публичный           |
-| GET    | `/api/v1/restaurants`   | публичный           |
-| POST   | `/api/v1/restaurants`   | ADMIN               |
-| POST   | `/api/v1/orders`        | USER / ADMIN + JWT  |
-| GET    | `/swagger-ui.html`      | публичный           |
-| GET    | `/v3/api-docs`          | публичный           |
+| Метод  | Путь                              | Кэш              |
+|:-------|:----------------------------------|:-----------------|
+| GET    | `/api/v1/restaurants`             | `restaurants`    |
+| GET    | `/api/v1/restaurants/{id}`        | `restaurants`    |
+| GET    | `/api/v1/restaurants/{id}/dishes` | `dishes`         |
+| POST   | `/api/v1/restaurants`             | инвалидация      |
+| POST   | `/api/v1/restaurants/{id}/dishes` | инвалидация menu |
 
-Полное описание с примерами запросов — в Swagger UI.
+Полное описание API — в Swagger UI: http://localhost:8080/swagger-ui.html
