@@ -161,6 +161,7 @@ docker compose up --build
 ## Скриншоты
 <img width="739" height="76" alt="image" src="https://github.com/user-attachments/assets/2e7df058-9987-47fd-92ef-fa6d8f444ad4" />
 <img width="810" height="253" alt="image" src="https://github.com/user-attachments/assets/6f1a1ca8-5b06-41d9-8a97-5b2db8c897cb" />
+<img width="340" height="312" alt="image" src="https://github.com/user-attachments/assets/74e77679-020e-4962-a814-d096391b20ac" />
 <img width="912" height="331" alt="image" src="https://github.com/user-attachments/assets/bf551f86-dd47-4d72-ba56-cc7987f9d21e" />
 
 
