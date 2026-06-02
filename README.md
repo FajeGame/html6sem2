@@ -144,6 +144,8 @@ docker compose up --build
 ```
 ---
 ## Скриншоты
+<img width="781" height="88" alt="image" src="https://github.com/user-attachments/assets/53014633-54cd-49ea-9881-00d5e52b83af" />
+<img width="695" height="327" alt="image" src="https://github.com/user-attachments/assets/1396b1f1-3286-444b-b442-53f5a7533b66" />
 
 
 ---
