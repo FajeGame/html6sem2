@@ -19,4 +19,7 @@ interface OrderJpaRepository : JpaRepository<OrderEntity, Long> {
 
     @EntityGraph(attributePaths = ["user", "dishes"])
     fun findAllByOrderByIdAsc(): List<OrderEntity>
+
+    @EntityGraph(attributePaths = ["user", "dishes"])
+    fun findByStatusAndCreatedAtBefore(status: OrderStatus, createdAtBefore: java.time.LocalDateTime): List<OrderEntity>
 }

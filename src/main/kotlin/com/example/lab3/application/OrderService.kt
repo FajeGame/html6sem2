@@ -17,7 +17,8 @@ import java.time.LocalDateTime
 class OrderService(
     private val orderRepositoryPort: OrderRepositoryPort,
     private val userRepositoryPort: UserRepositoryPort,
-    private val dishService: DishService
+    private val dishService: DishService,
+    private val notificationService: NotificationService
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -42,6 +43,9 @@ class OrderService(
 
     fun findAll(userId: Long?, status: OrderStatus?): List<Order> = orderRepositoryPort.findAll(userId, status)
 
+    fun findStuckPreparingOrders(createdBefore: LocalDateTime): List<Order> =
+        orderRepositoryPort.findByStatusAndCreatedAtBefore(OrderStatus.PREPARING, createdBefore)
+
     fun deleteById(id: Long): Boolean = orderRepositoryPort.deleteById(id)
 
     fun updateStatus(id: Long, newStatus: OrderStatus): Order {
@@ -49,8 +53,11 @@ class OrderService(
         if (!isTransitionAllowed(existing.status, newStatus)) {
             throw InvalidOrderStateException("Invalid status transition from ${existing.status} to $newStatus")
         }
+        if (existing.status == newStatus) return existing
         logger.info { "Updating order id=$id status=${existing.status}->$newStatus" }
-        return orderRepositoryPort.update(existing.copy(status = newStatus)) ?: existing
+        val updated = orderRepositoryPort.update(existing.copy(status = newStatus)) ?: existing
+        notifyStatusChange(updated, newStatus)
+        return updated
     }
 
     fun getDishes(order: Order): List<Dish> = dishService.findByIds(order.dishIds)
@@ -73,11 +80,17 @@ class OrderService(
         return findAll(user.id, status)
     }
 
+    private fun notifyStatusChange(order: Order, newStatus: OrderStatus) {
+        val user = userRepositoryPort.findById(order.userId) ?: return
+        notificationService.sendOrderStatusUpdate(user.email, order.id, newStatus.name)
+    }
+
     private fun isTransitionAllowed(from: OrderStatus, to: OrderStatus): Boolean {
         if (from == to) return true
         return when (from) {
             OrderStatus.PENDING -> to == OrderStatus.CONFIRMED || to == OrderStatus.CANCELLED
-            OrderStatus.CONFIRMED -> to == OrderStatus.DELIVERED || to == OrderStatus.CANCELLED
+            OrderStatus.CONFIRMED -> to == OrderStatus.PREPARING || to == OrderStatus.CANCELLED
+            OrderStatus.PREPARING -> to == OrderStatus.DELIVERED || to == OrderStatus.CANCELLED
             OrderStatus.DELIVERED -> false
             OrderStatus.CANCELLED -> false
         }

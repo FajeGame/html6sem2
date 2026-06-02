@@ -32,5 +32,12 @@ class MockOrderRepository : OrderRepositoryPort {
             .toList()
     }
 
+    override fun findByStatusAndCreatedAtBefore(status: OrderStatus, createdBefore: java.time.LocalDateTime): List<Order> =
+        storage.values
+            .asSequence()
+            .filter { it.status == status && it.createdAt.isBefore(createdBefore) }
+            .sortedBy { it.id }
+            .toList()
+
     override fun deleteById(id: Long): Boolean = storage.remove(id) != null
 }

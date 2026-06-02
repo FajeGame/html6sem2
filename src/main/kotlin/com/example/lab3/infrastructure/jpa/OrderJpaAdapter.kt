@@ -48,6 +48,11 @@ class OrderJpaAdapter(
         return entities.map { it.toDomain() }.sortedBy { it.id }
     }
 
+    override fun findByStatusAndCreatedAtBefore(status: OrderStatus, createdBefore: java.time.LocalDateTime): List<Order> =
+        orderJpaRepository.findByStatusAndCreatedAtBefore(status, createdBefore)
+            .map { it.toDomain() }
+            .sortedBy { it.id }
+
     override fun deleteById(id: Long): Boolean {
         if (!orderJpaRepository.existsById(id)) return false
         orderJpaRepository.deleteById(id)

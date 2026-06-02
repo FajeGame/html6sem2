@@ -17,6 +17,7 @@ import org.mockito.InjectMocks
 import org.mockito.Mock
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -32,6 +33,9 @@ class OrderServiceTest {
 
     @Mock
     lateinit var dishService: DishService
+
+    @Mock
+    lateinit var notificationService: NotificationService
 
     @InjectMocks
     lateinit var orderService: OrderService
@@ -92,10 +96,12 @@ class OrderServiceTest {
         val updated = existing.copy(status = OrderStatus.CONFIRMED)
         whenever(orderRepositoryPort.findById(1)).thenReturn(existing)
         whenever(orderRepositoryPort.update(updated)).thenReturn(updated)
+        whenever(userRepositoryPort.findById(1)).thenReturn(user)
 
         val result = orderService.updateStatus(1, OrderStatus.CONFIRMED)
 
         assertEquals(OrderStatus.CONFIRMED, result.status)
+        verify(notificationService).sendOrderStatusUpdate(user.email, 1, OrderStatus.CONFIRMED.name)
     }
 
     @Test

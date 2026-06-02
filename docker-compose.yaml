@@ -28,6 +28,12 @@ services:
       timeout: 3s
       retries: 5
 
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   app:
     build: .
     ports:
@@ -38,14 +44,20 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      MAIL_HOST: mailhog
+      MAIL_PORT: 1025
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      STUCK_ORDER_INTERVAL_MS: ${STUCK_ORDER_INTERVAL_MS:-900000}
+      STUCK_ORDER_THRESHOLD_HOURS: ${STUCK_ORDER_THRESHOLD_HOURS:-1}
       SERVER_PORT: 8080
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailhog:
+        condition: service_started
 
   pgadmin:
     image: dpage/pgadmin4
